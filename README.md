@@ -8,6 +8,8 @@ Based on [MojoZork](https://github.com/icculus/mojozork) by Ryan C. Gordon.
 
 > Only Z-Machine version 3 story files are supported. Zork 1 (`zork1.dat`) is included.
 
+> AI Tools (Claude Code, Google Antigravity, Microsoft Copilot) have been used to perform some tasks in this project.
+
 ---
 
 ## Building
