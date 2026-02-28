@@ -25,22 +25,17 @@ Requires Go 1.21+.
 ### Docker
 
 ```bash
-make docker                                    # builds image tagged go-zork:latest
-docker run -it go-zork                         # play interactively
-docker run -p 8080:8080 go-zork ./web          # web UI
-docker run -p 8081:8081 go-zork ./mcp --mode sse # MCP SSE server
+make docker-build                                         # builds image tagged smbaker/go-zork
+docker run -it smbaker/go-zork                            # play interactively
+docker run -p 8080:8080 smbaker/go-zork ./web             # web UI
+docker run -p 8081:8081 smbaker/go-zork ./mcp --mode sse  # MCP SSE server
 ```
 
 To push to Docker Hub:
 
 ```bash
-docker tag go-zork smbaker/go-zork:latest
-docker tag go-zork smbaker/go-zork:1.0.0
-docker push smbaker/go-zork:latest
-docker push smbaker/go-zork:1.0.0
+make docker-push    # tags as docker.io/smbaker/go-zork:1.0.0 and pushes
 ```
-
-The build uses `--network=host` so the Go toolchain can reach the module proxy from within the container.
 
 ---
 
