@@ -1,0 +1,6 @@
+apiVersion: v2
+name: go-zork
+description: Z-Machine interpreter with web and MCP server front-ends
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

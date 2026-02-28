@@ -1,0 +1,10 @@
+_build/
+vendor/
+*.exe
+*.o
+*~
+walthrough_output.txt
+mcp.json
+script.sh
+zorktest.txt
+.vscode/

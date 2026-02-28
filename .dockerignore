@@ -1,0 +1,10 @@
+_build/
+vendor/
+*.dat~
+*.txt~
+walthrough_output.txt
+mcp.exe
+mcp.json~
+script.sh
+zorktest.txt
+.git/

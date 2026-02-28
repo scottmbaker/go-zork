@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "go-zork.name" . }}
+  labels:
+    {{- include "go-zork.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "go-zork.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "go-zork.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: go-zork
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if eq .Values.mode "mcp" }}
+          command: ["./mcp"]
+          args:
+            - "--mode=sse"
+            - "--story={{ .Values.mcp.story }}"
+            - "--port=:{{ .Values.mcp.port }}"
+            {{- if .Values.mcp.log }}
+            - "--log"
+            {{- end }}
+          {{- else }}
+          command: ["./web"]
+          args:
+            - "--story={{ .Values.web.story }}"
+            - "--port=:{{ .Values.web.port }}"
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ include "go-zork.containerPort" . }}
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

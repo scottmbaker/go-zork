@@ -1,0 +1,36 @@
+image:
+  repository: smbaker/go-zork
+  tag: 1.0.0
+  pullPolicy: IfNotPresent
+
+# mode selects which server to run: "web" or "mcp"
+mode: web
+
+web:
+  port: 8080
+  story: zork1.dat
+
+mcp:
+  port: 8081
+  story: zork1.dat
+  log: false
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 80
+  nodePort: ""  # set to a port number (30000-32767) when type is NodePort
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
