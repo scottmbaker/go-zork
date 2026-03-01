@@ -3,12 +3,14 @@
 // Supports stdio (default) and SSE transports.
 
 /*
-Example prompt:
+Example prompts:
 
 You're going to play zork. Do not use raw command mode because I want you to show your moves.
 Do not use my walkthrough.txt file as that would be cheating and you're not a cheater.
-I want you to find a three nearby treasures on your own and return it to the trophy chest.
 Reset the game using the restart command before starting so we know it is clear.
+Await my instructions after this is done.
+
+I want you to find a nearby treasure on your own and return it to the trophy case. Tell me your score at the end.
 */
 
 package main
@@ -174,6 +176,7 @@ func registerTools(s *server.MCPServer, g *Game) {
 		{"inventory", "List all items you are currently carrying.", "inventory"},
 		{"score", "Display your current score and number of moves.", "score"},
 		{"wait", "Wait one turn without doing anything (z).", "wait"},
+		{"pray", "Pray.", "pray"},
 		{"verbose", "Enable verbose mode: full room descriptions on every visit.", "verbose"},
 		{"brief", "Enable brief mode: abbreviated room descriptions after the first visit.", "brief"},
 		{"superbrief", "Enable superbrief mode: only room names, no descriptions.", "superbrief"},
@@ -222,8 +225,11 @@ func registerTools(s *server.MCPServer, g *Game) {
 		{"rub", "Rub or polish an object.", "rub"},
 		{"light", "Light an object such as a candle or torch.", "light"},
 		{"extinguish", "Extinguish a burning object.", "extinguish"},
+		{"cross", "Cross something such as a bridge or rainbow.", "cross"},
+		{"echo", "Say something and hear it echoed back.", "echo"},
 		{"enter", "Enter something such as a boat or passage.", "enter"},
 		{"exit", "Exit or leave something you are inside.", "exit"},
+		{"wind", "Wind up an object such as a clockwork device.", "wind up"},
 	}
 	for _, t := range objectTools {
 		t := t
@@ -299,6 +305,15 @@ func registerTools(s *server.MCPServer, g *Game) {
 		mcp.WithString("key", mcp.Required(), mcp.Description("The key to use")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return text(g.send(fmt.Sprintf("lock %s with %s", req.GetString("object", ""), req.GetString("key", ""))))
+	})
+
+	// turn <object> with <tool>
+	s.AddTool(mcp.NewTool("turn",
+		mcp.WithDescription("Turn an object using a tool (e.g. turn bolt with wrench)."),
+		mcp.WithString("object", mcp.Required(), mcp.Description("The object to turn")),
+		mcp.WithString("tool", mcp.Required(), mcp.Description("The tool to turn it with")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return text(g.send(fmt.Sprintf("turn %s with %s", req.GetString("object", ""), req.GetString("tool", ""))))
 	})
 
 	// tie <item> to <target>

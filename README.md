@@ -138,6 +138,7 @@ Add to `claude_desktop_config.json`:
 | `inventory` | — | List carried items |
 | `score` | — | Show score and move count |
 | `wait` | — | Wait one turn |
+| `pray` | — | Pray |
 | `verbose` / `brief` / `superbrief` | — | Set description verbosity |
 | `north` `south` `east` `west` | — | Move in cardinal directions |
 | `northeast` `northwest` `southeast` `southwest` | — | Move diagonally |
@@ -146,12 +147,14 @@ Add to `claude_desktop_config.json`:
 | `read` `eat` `drink` `turn_on` `turn_off` | `object` | More single-object actions |
 | `push` `pull` `climb` `move` | `object` | Physical manipulation |
 | `light` `extinguish` `wave` `ring` `rub` | `object` | Special interactions |
-| `enter` `exit` `smell` `listen` | `object` | Environment interactions |
+| `cross` `echo` `enter` `exit` `smell` `listen` | `object` | Environment interactions |
+| `wind` | `object` | Wind up a clockwork object |
 | `put` | `item`, `container` | Put item in/on container |
 | `attack` | `target`, `weapon` (opt.) | Attack a creature |
 | `throw` | `item`, `target` | Throw item at target |
 | `give` | `item`, `recipient` | Give item to character |
 | `unlock` / `lock` | `object`, `key` | Lock or unlock with a key |
+| `turn` | `object`, `tool` | Turn an object with a tool (e.g. bolt with wrench) |
 | `tie` | `item`, `target` | Tie item to something |
 | `insert` | `item`, `container` | Insert item into container |
 | `say` | `text`, `to` (opt.) | Say something |
