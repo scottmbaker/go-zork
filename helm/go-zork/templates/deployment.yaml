@@ -27,6 +27,10 @@ spec:
             {{- if .Values.mcp.log }}
             - "--log"
             {{- end }}
+            {{- if and .Values.mcp.tls.enabled .Values.mcp.tls.secretName }}
+            - "--cert=/etc/tls/tls.crt"
+            - "--key=/etc/tls/tls.key"
+            {{- end }}
           {{- else }}
           command: ["./web"]
           args:
@@ -49,6 +53,18 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if and (eq .Values.mode "mcp") .Values.mcp.tls.enabled .Values.mcp.tls.secretName }}
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/tls
+              readOnly: true
+          {{- end }}
+      {{- if and (eq .Values.mode "mcp") .Values.mcp.tls.enabled .Values.mcp.tls.secretName }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ .Values.mcp.tls.secretName }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

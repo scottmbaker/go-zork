@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"go-zork/pkg/zork"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -348,6 +349,8 @@ func main() {
 	saveFile := flag.String("save", "save.dat", "path to save file")
 	mode := flag.String("mode", "stdio", "transport mode: stdio or sse")
 	port := flag.String("port", ":8081", "listen address (SSE mode only)")
+	certFile := flag.String("cert", "", "TLS certificate file (enables HTTPS when set with -key)")
+	keyFile := flag.String("key", "", "TLS private key file (enables HTTPS when set with -cert)")
 	logFlag := flag.Bool("log", false, "print all game input and output to stderr")
 	flag.Parse()
 
@@ -386,11 +389,26 @@ func main() {
 			os.Exit(1)
 		}
 	case "sse":
-		addr := fmt.Sprintf(":%s", *port)
-		sseServer := server.NewSSEServer(s, server.WithBaseURL(addr))
-		fmt.Fprintf(os.Stderr, "Zork MCP SSE server listening on %s\n", *port)
-		if err := sseServer.Start(*port); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		useTLS := *certFile != "" && *keyFile != ""
+		scheme := "http"
+		if useTLS {
+			scheme = "https"
+		}
+		baseURL := fmt.Sprintf("%s://localhost%s", scheme, *port)
+		sseServer := server.NewSSEServer(s, server.WithBaseURL(baseURL))
+		httpSrv := &http.Server{
+			Addr:    *port,
+			Handler: sseServer,
+		}
+		fmt.Fprintf(os.Stderr, "Zork MCP SSE server listening on %s (%s)\n", *port, scheme)
+		var sseErr error
+		if useTLS {
+			sseErr = httpSrv.ListenAndServeTLS(*certFile, *keyFile)
+		} else {
+			sseErr = httpSrv.ListenAndServe()
+		}
+		if sseErr != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", sseErr)
 			os.Exit(1)
 		}
 	default:

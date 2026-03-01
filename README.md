@@ -100,6 +100,8 @@ Options:
   -save     string   save file path  (default "save.dat")
   -mode     string   transport: stdio or sse (default "stdio")
   -port     string   listen address for SSE mode (default ":8081")
+  -cert     string   TLS certificate file; enables HTTPS when set with -key
+  -key      string   TLS private key file; enables HTTPS when set with -cert
   -log               print all game input/output to stdout
 ```
 
@@ -196,6 +198,8 @@ helm install zork helm/go-zork \
 | `web.port` | `8080` | Web server container port |
 | `mcp.port` | `8081` | MCP server container port |
 | `mcp.log` | `false` | Print game transcript to stdout |
+| `mcp.tls.enabled` | `false` | Enable HTTPS for the MCP SSE server |
+| `mcp.tls.secretName` | `""` | Name of a `kubernetes.io/tls` Secret containing `tls.crt` and `tls.key` |
 | `service.type` | `ClusterIP` | Kubernetes service type |
 | `service.port` | `80` | Service port |
 | `service.nodePort` | `""` | NodePort number (30000–32767) when type is `NodePort` |
