@@ -7,10 +7,12 @@
 package zork
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -67,6 +69,30 @@ type ZMachine struct {
 	RandomSeed  int32
 	SaveFile    string // path for save/restore; defaults to "save.dat"
 	InitialSeed int32
+
+	// SaveHandler and RestoreHandler, when set, take over the in-game save and
+	// restore commands. The blob is opaque; it must be returned unmodified.
+	// When nil, the commands use SaveFile on disk.
+	SaveHandler    func(blob []byte) bool
+	RestoreHandler func() (blob []byte, ok bool)
+
+	// Restarts counts how many times the game has been restarted.
+	Restarts int
+
+	pristine []byte  // unmodified story image, for restart; never written to
+	stepping bool    // driven by Start/Step rather than Run
+	pending  *string // the line the next read will consume, when stepping
+	out      []byte  // output collected while stepping
+	objCount int     // number of objects, found once at load
+}
+
+// emit delivers a chunk of game output to whoever is driving the machine.
+func (z *ZMachine) emit(b []byte) {
+	if z.stepping {
+		z.out = append(z.out, b...)
+	} else if z.OutputChan != nil {
+		z.OutputChan <- b
+	}
 }
 
 func (z *ZMachine) readUI16(story []byte, offset uint32) uint16 {
@@ -792,7 +818,7 @@ func (z *ZMachine) opcodeJin() error {
 	objid := z.Operands[0]
 	parentid := z.Operands[1]
 	if objid == 0 {
-		return nil
+		return z.doBranch(parentid == 0) // the branch data must be consumed
 	}
 	objptr, err := z.getObjectPtr(objid)
 	if err != nil {
@@ -853,9 +879,7 @@ func (z *ZMachine) opcodeGetChild() error {
 }
 
 func (z *ZMachine) opcodeNewLine() error {
-	if z.OutputChan != nil {
-		z.OutputChan <- []byte("\n")
-	}
+	z.emit([]byte("\n"))
 	return nil
 }
 
@@ -1003,13 +1027,9 @@ func (z *ZMachine) printZscii(str []byte, abbr int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if z.OutputChan != nil {
-			z.OutputChan <- bigBuf
-		}
+		z.emit(bigBuf)
 	} else {
-		if z.OutputChan != nil {
-			z.OutputChan <- buf[:decodedChars]
-		}
+		z.emit(buf[:decodedChars])
 	}
 	return retval, nil
 }
@@ -1025,16 +1045,14 @@ func (z *ZMachine) opcodePrint() error {
 
 func (z *ZMachine) opcodePrintNum() error {
 	str := fmt.Sprintf("%d", int16(z.Operands[0]))
-	if z.OutputChan != nil {
-		z.OutputChan <- []byte(str)
-	}
+	z.emit([]byte(str))
 	return nil
 }
 
 func (z *ZMachine) opcodePrintChar() error {
 	ch := z.decodeZsciiChar(z.Operands[0])
-	if ch != 0 && z.OutputChan != nil {
-		z.OutputChan <- []byte{ch}
+	if ch != 0 {
+		z.emit([]byte{ch})
 	}
 	return nil
 }
@@ -1045,9 +1063,7 @@ func (z *ZMachine) opcodePrintRet() error {
 		return err
 	}
 	z.PC += uint32(bytesConsumed)
-	if z.OutputChan != nil {
-		z.OutputChan <- []byte("\n")
-	}
+	z.emit([]byte("\n"))
 	return z.doReturn(1)
 }
 
@@ -1113,138 +1129,94 @@ func (z *ZMachine) opcodeRandom() error {
 	return z.writeVar(store, result, false)
 }
 
-func (z *ZMachine) tokenizeUserInput() error {
-	tableA2V1 := []byte("0123456789.,!?_#'\"/\\<-:()")
-	tableA2V2plus := []byte("\n0123456789.,!?_#'\"/\\-:()")
+// a2Chars lists the version 3 A2 alphabet from Z-character 7 up.
+const a2Chars = "\n0123456789.,!?_#'\"/\\-:()"
 
-	tableA2 := tableA2V2plus
-	if z.Header.Version <= 1 {
-		tableA2 = tableA2V1
-	}
-
-	inputAddr := z.Operands[0]
-	parseAddr := z.Operands[1]
-
-	input := z.Story[inputAddr:]
-	parse := z.Story[parseAddr:]
-	parselen := parse[0]
-
-	sepsAddr := uint32(z.Header.DictAddr)
-	numseps := z.Story[sepsAddr]
-	sepsAddr++
-	seps := z.Story[sepsAddr : sepsAddr+uint32(numseps)]
-
-	dictAddr := sepsAddr + uint32(numseps)
-	entrylen := z.Story[dictAddr]
-	dictAddr++
-	numentries := z.readUI16(z.Story, dictAddr)
-	dictAddr += 2
-
-	var numToks uint8
-
-	// input[0] is max length of input buffer. input[1] onwards is the string.
-	strStart := uint32(1)
-	ptr := uint32(1)
-
-	// Build map for A2 index
-	tableA2Map := make(map[byte]int)
-	for i, b := range tableA2 {
-		tableA2Map[b] = i
-	}
-
-	for {
-		isSep := false
-		ch := input[ptr]
-		if ch == ' ' || ch == 0 {
-			isSep = true
-		} else {
-			for _, sep := range seps {
-				if ch == sep {
-					isSep = true
-					break
-				}
-			}
-		}
-
-		if isSep {
-			var encoded [3]uint16
-			toklen := uint8(ptr - strStart)
-			if toklen == 0 {
-				break
-			}
-
-			var zchars [12]uint8
-			zchidx := 0
-			for i := uint8(0); i < toklen; i++ {
-				c := input[strStart+uint32(i)]
-				if c >= 'a' && c <= 'z' {
-					zchars[zchidx] = (c - 'a') + 6
-					zchidx++
-				} else if c >= 'A' && c <= 'Z' {
-					zchars[zchidx] = (c - 'A') + 6
-					zchidx++
-				} else {
-					if idx, ok := tableA2Map[c]; ok {
-						zchars[zchidx] = 3
-						zchars[zchidx+1] = uint8(idx + 1 + 6)
-						zchidx += 2
-					}
-				}
-				if zchidx >= 12 {
-					break
-				}
-			}
-
-			pos := 0
-			for j := 0; j < 6; j++ {
-				shift := uint((2 - (j % 3)) * 5)
-				val := uint16(5)
-				if pos < zchidx {
-					val = uint16(zchars[pos])
-					pos++
-				}
-				encoded[j/3] |= val << shift
-			}
-
-			dictptr := dictAddr
-			var i uint16
-			if z.Header.Version <= 3 {
-				encoded[1] |= 0x8000
-
-				for i = 0; i < numentries; i++ {
-					zscii1 := z.readUI16(z.Story, dictptr)
-					zscii2 := z.readUI16(z.Story, dictptr+2)
-					if encoded[0] == zscii1 && encoded[1] == zscii2 {
-						break
-					}
-					dictptr += uint32(entrylen)
-				}
-			} else {
-				return fmt.Errorf("write me")
-			}
-
-			var dictaddrVal uint16
-			if i < numentries {
-				dictaddrVal = uint16(dictptr)
-			}
-
-			parseOffset := uint32(1) + uint32(numToks)*4
-			z.writeUI16(parse, parseOffset+1, dictaddrVal)
-			parse[parseOffset+3] = toklen
-			parse[parseOffset+4] = uint8((strStart - 1) + 1)
-			numToks++
-
-			if numToks >= parselen {
-				break
-			}
-
-			strStart = ptr + 1
-		}
-
-		if ch == 0 {
+// encodeWord packs a word into the 4-byte dictionary form used by version 3:
+// six Z-characters, padded with 5s.
+func encodeWord(word []byte) [2]uint16 {
+	zchars := make([]uint8, 0, 12)
+	for _, c := range word {
+		if len(zchars) >= 6 {
 			break
 		}
-		ptr++
+		if c >= 'a' && c <= 'z' {
+			zchars = append(zchars, c-'a'+6)
+		} else if idx := strings.IndexByte(a2Chars, c); idx >= 0 {
+			zchars = append(zchars, 5, uint8(idx+7))
+		} else {
+			zchars = append(zchars, 5, 6, c>>5, c&0x1F) // ZSCII escape
+		}
+	}
+	var encoded [2]uint16
+	for j := 0; j < 6; j++ {
+		val := uint16(5)
+		if j < len(zchars) {
+			val = uint16(zchars[j])
+		}
+		encoded[j/3] |= val << uint((2-(j%3))*5)
+	}
+	encoded[1] |= 0x8000
+	return encoded
+}
+
+// tokenizeUserInput splits the text buffer into words and looks each one up in
+// the dictionary. Spaces divide words and are dropped; the dictionary's
+// separators (comma, period, quote in Infocom's games) divide words and are
+// also words themselves.
+func (z *ZMachine) tokenizeUserInput() error {
+	if z.Header.Version > 3 {
+		return fmt.Errorf("tokenizing is only implemented for version 3")
+	}
+
+	input := z.Story[z.Operands[0]:]
+	parse := z.Story[z.Operands[1]:]
+	maxToks := parse[0]
+
+	sepsAddr := uint32(z.Header.DictAddr)
+	numseps := uint32(z.Story[sepsAddr])
+	seps := z.Story[sepsAddr+1 : sepsAddr+1+numseps]
+	dictAddr := sepsAddr + 1 + numseps
+	entrylen := uint32(z.Story[dictAddr])
+	numentries := uint32(z.readUI16(z.Story, dictAddr+1))
+	dictAddr += 3
+
+	// input[0] is the buffer size; the zero-terminated text starts at input[1].
+	end := 1
+	for end < len(input) && input[end] != 0 {
+		end++
+	}
+
+	var numToks uint8
+	for pos := 1; pos < end && numToks < maxToks; {
+		if input[pos] == ' ' {
+			pos++
+			continue
+		}
+		start := pos
+		if bytes.IndexByte(seps, input[pos]) >= 0 {
+			pos++
+		} else {
+			for pos < end && input[pos] != ' ' && bytes.IndexByte(seps, input[pos]) < 0 {
+				pos++
+			}
+		}
+
+		encoded := encodeWord(input[start:pos])
+		var found uint16
+		for i := uint32(0); i < numentries; i++ {
+			ptr := dictAddr + i*entrylen
+			if z.readUI16(z.Story, ptr) == encoded[0] && z.readUI16(z.Story, ptr+2) == encoded[1] {
+				found = uint16(ptr)
+				break
+			}
+		}
+
+		entry := uint32(2) + uint32(numToks)*4
+		z.writeUI16(parse, entry, found)
+		parse[entry+2] = uint8(pos - start)
+		parse[entry+3] = uint8(start)
+		numToks++
 	}
 
 	parse[1] = numToks
@@ -1268,11 +1240,21 @@ func (z *ZMachine) opcodeRead() error {
 
 	z.updateStatusBar()
 
-	line, ok := <-z.InputChan
-	if !ok {
-		z.Quit = true
-		z.StepCompleted = true
-		return nil
+	var line string
+	if z.stepping {
+		if z.pending == nil {
+			return fmt.Errorf("read with no pending input")
+		}
+		line = *z.pending
+		z.pending = nil
+	} else {
+		var ok bool
+		line, ok = <-z.InputChan
+		if !ok {
+			z.Quit = true
+			z.StepCompleted = true
+			return nil
+		}
 	}
 
 	// emulate fgets capping
@@ -1327,8 +1309,20 @@ func (z *ZMachine) LoadStory(fname string) error {
 		return fmt.Errorf("failed to open '%s': %w", fname, err)
 	}
 
-	z.Story = story
 	z.StoryFilename = fname
+	return z.LoadStoryBytes(story)
+}
+
+// LoadStoryBytes initializes the virtual machine from a story image in memory.
+// The image is copied; the caller's slice is only ever read, so one image may
+// be shared by many machines as long as nobody modifies it.
+func (z *ZMachine) LoadStoryBytes(image []byte) error {
+	if len(image) < 64 {
+		return fmt.Errorf("story file is too short")
+	}
+	z.pristine = image
+	story := append([]byte(nil), image...)
+	z.Story = story
 	z.InstructionsRun = 0
 	z.PC = 0
 	z.LogicalPC = 0
@@ -1375,6 +1369,9 @@ func (z *ZMachine) LoadStory(fname string) error {
 	}
 
 	total := uint32(z.Header.StoryLen) * 2
+	if total > uint32(len(story)) {
+		return fmt.Errorf("story file is truncated")
+	}
 	var checksum uint16
 	for i := uint32(0x40); i < total; i++ {
 		checksum += uint16(story[i])
@@ -1386,11 +1383,13 @@ func (z *ZMachine) LoadStory(fname string) error {
 
 	z.PC = uint32(z.Header.PcStart)
 	z.LogicalPC = uint32(z.Header.PcStart)
+	z.objCount = z.countObjects()
 	return nil
 }
 
 func (z *ZMachine) opcodeRestart() error {
-	return z.LoadStory(z.StoryFilename)
+	z.Restarts++
+	return z.LoadStoryBytes(z.pristine)
 }
 
 func (z *ZMachine) saveFile() string {
@@ -1401,6 +1400,9 @@ func (z *ZMachine) saveFile() string {
 }
 
 func (z *ZMachine) opcodeSave() error {
+	if z.SaveHandler != nil {
+		return z.doBranch(z.SaveHandler(z.snapshot(snapSaved)))
+	}
 	f, err := os.Create(z.saveFile())
 	if err != nil {
 		return z.doBranch(false)
@@ -1429,6 +1431,18 @@ func (z *ZMachine) opcodeSave() error {
 }
 
 func (z *ZMachine) opcodeRestore() error {
+	if z.RestoreHandler != nil {
+		blob, ok := z.RestoreHandler()
+		if ok {
+			// The saved random number state is not reinstated: an in-game
+			// restore continues the current stream. (Restore, which resumes
+			// a session between turns, does reinstate it.)
+			seed, initial := z.RandomSeed, z.InitialSeed
+			ok = z.restore(blob, snapSaved) == nil
+			z.RandomSeed, z.InitialSeed = seed, initial
+		}
+		return z.doBranch(ok)
+	}
 	f, err := os.Open(z.saveFile())
 	if err != nil {
 		return z.doBranch(false)
