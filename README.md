@@ -227,6 +227,20 @@ done         <-chan error    // closed when the game ends
 
 All three front-ends follow the same pattern: bridge their transport (stdin/stdout, WebSocket, or MCP tool call) to these two channels. The MCP server serialises concurrent tool calls through a mutex so each command/response pair is atomic.
 
+### Stepping, snapshots and inspection
+
+A program can also drive the machine one turn at a time, with no goroutines:
+
+```go
+z, err := zork.NewMachine(story, seed)  // story is the file's bytes; it is not modified
+res, err := z.Start()                   // runs to the first prompt; res.Output is the text
+res, err = z.Step("open mailbox")       // plays one line; res.Status says if the game quit
+```
+
+Between turns, `z.Snapshot()` captures the whole state, including the random number generator, and `z.Restore(snap)` puts it back into any machine running the same story. A server can therefore keep no game in memory. `z.Clone()` gives an independent copy for trying things without disturbing the game. Setting `SaveHandler` and `RestoreHandler` sends the in-game `save` and `restore` commands to the program instead of to a file.
+
+Read-only accessors report the game's state: `Global`, `ObjectParent`, `ObjectChild`, `ObjectSibling`, `ObjectName`, `ObjectAttr`, `ObjectProp`, `PackedText` and `StatusLine`.
+
 ---
 
 ## Testing
